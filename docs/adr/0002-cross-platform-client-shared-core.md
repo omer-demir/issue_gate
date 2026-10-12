@@ -32,10 +32,10 @@ transport framework. Ship two thin clients that consume this core:
   native modules only for platform secure storage (iOS Keychain/Secure
   Enclave, Android Keystore) and biometric prompts.
 - **Web**: a web app (e.g., React + a bundler) reusing the same core library
-  via npm workspace, using the Web Crypto API / WebAuthn-backed local storage
-  where available, with the explicit caveat that browser storage is a weaker
-  secure-storage boundary than OS keychains (documented as a known
-  limitation, not hidden).
+  via npm workspace and using the Web Crypto API. WebAuthn may authenticate
+  the account but does not provide persistent storage for arbitrary vault
+  keys. The unlocked vault key remains in memory only for the tab's lifetime;
+  no persistent browser storage is used.
 
 Domain logic (core) is kept independent of transport and persistence: the
 core exposes pure functions/classes for encrypt/decrypt/merge and an

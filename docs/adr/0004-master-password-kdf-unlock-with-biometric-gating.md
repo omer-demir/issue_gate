@@ -37,17 +37,18 @@ Separate two distinct concerns:
    biometric-backed cache, since browsers lack an equivalent secure enclave
    API.
 
-Account authentication and vault unlock use **different secrets** (account
-password vs. master password) by default, though a user may choose to reuse
-the same passphrase for convenience; the system does not require them to be
-equal, which keeps vault confidentiality independent of account-auth
-compromise.
+Account authentication and vault unlock use **different secrets**: the account
+credential authenticates to the backend, while the master password is used
+only on the client for vault key derivation and is never sent to the backend.
+Reusing the account credential as the master password is prohibited; this
+separation ensures compromise of account authentication does not provide the
+secret needed to derive the vault key.
 
 ## Alternatives Considered
 
 | Alternative | Rejected because |
 |---|---|
-| Single combined password doing double duty for both account login and key derivation, enforced as one value | Simpler UX, but a backend-side credential-stuffing/account-auth breach would directly leak the value needed to derive the master key, collapsing the two trust boundaries ADR-0001 relies on keeping separate. Allowed as a user *choice*, not as the enforced architecture. |
+| Single combined password doing double duty for both account login and key derivation | Rejected because the account-auth service handles the login credential; reusing it would let an account credential compromise expose the value needed to derive the master key, collapsing the two trust boundaries ADR-0001 relies on keeping separate. |
 | SSO/OAuth as the only account-auth and unlock mechanism (e.g., "Sign in with Google" unlocks the vault) | Convenient, but an identity provider cannot supply the master key for client-side decryption without the provider (or backend) learning/holding it, which breaks zero-knowledge; SSO can still gate *account access* later as an addition to, not a replacement for, the master-password-derived key. |
 | Biometrics as the sole unlock factor with no master-password fallback | OS biometric caches are good at protecting an already-derived key but are not a key-derivation source themselves; also needs a password fallback for new devices, OS biometric resets, or failures. |
 
@@ -64,9 +65,9 @@ compromise.
   decision.
 
 **Negative**
-- Two "passwords" (account vs. master) can confuse users who expect one
-  login; needs clear UX copy and onboarding to explain the distinction (or
-  explicit support for the "same value" convenience path).
+- Two distinct secrets (account credential vs. master password) can confuse
+  users who expect one login; onboarding must clearly explain that the master
+  password cannot be the account credential.
 - Losing the master password with no recovery kit configured is, by design,
   unrecoverable (see ADR-0001 risk).
 
@@ -77,8 +78,8 @@ compromise.
   guarantees (Secure Enclave/StrongBox) rather than custom key-wrapping;
   document that full security assumes an uncompromised OS.
 - **User confusion over two passwords**: Mitigation: onboarding flow that
-  defaults to "use the same value" with an explicit, clearly-labeled
-  advanced option to differentiate them.
+  clearly distinguishes the account credential from the master password and
+  requires them to be different.
 
 ## Migration, Rollout, and Rollback
 

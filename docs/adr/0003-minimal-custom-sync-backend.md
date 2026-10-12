@@ -27,16 +27,36 @@ store/retrieve opaque encrypted item blobs keyed by ID, track revisions for
 conflict detection, and never process secret content. Concretely:
 
 - A thin HTTP API (REST, JSON) backed by a standard relational store
-  (e.g., Postgres/SQLite) with a table shaped as: `(item_id, owner_id,
-  ciphertext, nonce, revision, updated_at)`.
+  (e.g., Postgres/SQLite) with an item table shaped as: `(item_id, owner_id,
+  ciphertext, nonce, algo, kdf_params, revision, updated_at, schema_version,
+  deleted_at, change_seq)`. The backend derives `owner_id` from the
+  authenticated principal and scopes every item operation, including conflict
+  responses, to that principal. Clients cannot use `owner_id` to claim or
+  access another account's records.
+- Account-level KDF bootstrap metadata (Argon2id parameters and the actual
+  per-user salt) is stored separately as `(owner_id, salt_ref, salt,
+  kdf_params, updated_at)` and returned by authenticated
+  `GET /v1/vault/kdf` before vault unlock as `{ saltRef, salt, kdfParams }`.
+  A new device can derive the vault key without resolving a client-only
+  `saltRef`; vault setup stores a client-generated salt and KDF parameters,
+  never the master password or derived key.
+- Item ciphertext is authenticated with associated data formed from the
+  RFC 8785 canonical serialization of `{ ownerId, itemId, algo,
+  schemaVersion }`, using the authenticated owner and stable item/envelope
+  fields, preventing valid ciphertext from being replayed under another item
+  or envelope context.
 - Authentication is separate from the secret-encryption key (see ADR-0004):
   the backend only verifies "is this user allowed to read/write this
   blob," using normal session/auth tokens — it is not a cryptographic
   trust boundary for the secret contents.
-- Sync/conflict resolution: optimistic concurrency via `revision` number;
+- Sync/conflict resolution: optimistic concurrency via per-item `revision`
+  number and an account-scoped change sequence for the paginated change feed;
   client-side last-write-wins with conflict surfaced to the user when
   revisions diverge (not silently overwritten), given this is single-user
-  (not concurrent-editor) scope per research.
+  (not concurrent-editor) scope per research. Deletes create tombstones in
+  that feed; a feed without a cursor starts at sequence zero and includes the
+  latest state of every item, including tombstones. Cursor expiry requires a
+  full resync that includes tombstones.
 
 ## Alternatives Considered
 

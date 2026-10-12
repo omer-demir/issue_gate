@@ -65,7 +65,7 @@ capability.
 // Shared core type — the only shape the backend ever stores/returns.
 interface EncryptedItemEnvelope {
   itemId: string;        // opaque UUID, client-generated
-  ownerId: string;       // account identifier (not secret)
+  ownerId: string;       // server-derived authenticated account identifier; response only
   ciphertext: string;    // base64, AEAD output (includes auth tag)
   nonce: string;         // base64, unique per encryption
   algo: "xchacha20poly1305" | "aes256gcm"; // versioned, extensible
@@ -73,26 +73,69 @@ interface EncryptedItemEnvelope {
   revision: number;      // monotonically increasing per item, optimistic concurrency
   updatedAt: string;     // ISO-8601, backend-assigned on write
   schemaVersion: 1;      // envelope format version for forward compatibility
+  deletedAt: string | null; // backend-assigned tombstone timestamp; null while active
+  changeSeq: number;     // monotonically increasing account-scoped sync sequence
+}
+
+interface KdfBootstrapMetadata {
+  saltRef: string;
+  salt: string; // base64-encoded
+  kdfParams: Omit<EncryptedItemEnvelope["kdfParams"], "saltRef">;
 }
 ```
 
 Invariants:
 - `ciphertext`/`nonce` are opaque to the backend; backend MUST NOT attempt
   to parse or index their content.
+- The client encrypts/decrypts using AEAD associated data equal to the RFC
+  8785 JSON Canonicalization Scheme serialization of `{ ownerId, itemId,
+  algo, schemaVersion }`. The authenticated account identifier is available
+  to the client from account authentication before vault unlock. The backend
+  derives `ownerId` from the authenticated principal, assigns it on stored
+  records and responses, and rejects a mismatching owner ID; clients cannot
+  select or change ownership.
 - `revision` is compared on write: client must send the `revision` it last
   read; a mismatch is rejected (see error semantics) rather than silently
   overwritten.
 - Decrypted plaintext (item title, username, password, URL, notes) is a
   client-side-only type, never defined in the backend's schema.
+- KDF bootstrap metadata is account-scoped and available after account
+  authentication, before vault unlock: `GET /v1/vault/kdf` returns
+  `{ saltRef, salt, kdfParams }`, where `salt` is base64-encoded and
+  `kdfParams` contains the Argon2id algorithm and cost parameters. The client
+  uses this metadata to derive the key on a new device; `saltRef` in item
+  envelopes identifies this account-level metadata version. The backend
+  stores and returns this non-secret metadata but never receives the master
+  password or derived key.
 
 ### 4.2 Sync API (backend ⇄ clients), `v1`
 
 ```
-GET  /v1/items                  → list EncryptedItemEnvelope[] for the authenticated owner, paginated
+GET  /v1/items?cursor=...       → paginated changes for the authenticated owner, including tombstones
 GET  /v1/items/:itemId          → single EncryptedItemEnvelope
 PUT  /v1/items/:itemId          → upsert; body includes `revision` (expected prior revision)
-DELETE /v1/items/:itemId        → tombstone delete (soft-delete + revision bump, enables sync of deletions)
+DELETE /v1/items/:itemId        → tombstone delete (soft-delete + revision and change-sequence bump)
+GET  /v1/vault/kdf              → account KDF parameters and actual salt, before vault unlock
 ```
+
+The authenticated account record stores KDF bootstrap metadata separately
+from items as `(owner_id, salt_ref, salt, kdf_params, updated_at)`; the
+endpoint returns only the metadata for the authenticated owner. Vault setup
+creates this metadata using a client-generated random salt and selected KDF
+parameters, without sending the master password or derived key.
+
+The changes feed returns `{ items, nextCursor }`; each item has a monotonically
+increasing account-scoped change sequence used to order changes, and
+`nextCursor` advances only through changes included in that page. With no
+cursor, the feed starts at sequence zero; each page contains the latest state
+of each item changed after its cursor, including tombstones. A delete appears
+as an envelope with `deletedAt` set, an incremented item revision, and its
+change sequence, so an offline client can discover and apply it while syncing
+from its last cursor. Tombstones remain available to sync clients; cursor
+expiry must require a full resync that includes tombstones rather than
+silently skipping deletions. Upsert request bodies omit `ownerId`; if present,
+it must match the authenticated principal and is never trusted for
+authorization.
 
 Error semantics:
 - `409 Conflict` — `revision` mismatch; response includes the current
@@ -101,8 +144,8 @@ Error semantics:
 - `401 Unauthorized` — account-auth token invalid/expired; distinct from
   any vault-unlock failure, which is a purely client-side concept the
   backend never observes (ADR-0004).
-- `410 Gone` — item previously tombstoned; included so clients can
-  reconcile local caches without re-creating deleted items.
+- `410 Gone` — item previously tombstoned; included for direct item lookups.
+  List synchronization discovers deletes through the changes feed above.
 - All error bodies: `{ "error": { "code": string, "message": string } }`,
   no secret-derived content ever included.
 
@@ -120,9 +163,10 @@ interface SecretStorageAdapter {
 }
 
 interface SyncTransport {
-  listItems(cursor?: string): Promise<{ items: EncryptedItemEnvelope[]; nextCursor?: string }>;
-  upsertItem(env: EncryptedItemEnvelope): Promise<EncryptedItemEnvelope>; // throws on 409 with server envelope attached
+  listItems(cursor?: string): Promise<{ items: EncryptedItemEnvelope[]; nextCursor: string }>;
+  upsertItem(env: Omit<EncryptedItemEnvelope, "ownerId" | "updatedAt" | "deletedAt" | "changeSeq">): Promise<EncryptedItemEnvelope>; // throws on 409 with server envelope attached
   deleteItem(itemId: string, revision: number): Promise<void>;
+  getKdfBootstrap(): Promise<KdfBootstrapMetadata>;
 }
 ```
 
@@ -157,9 +201,11 @@ its adapter *implementation* (Keychain/Keystore bridge; HTTP client).
   interfaces) and its test suite before any UI work, per ADR-0002 rollout
   order.
 - The backend's `v1` API and DB schema in §4.2 are implementation-ready
-  contracts; implement the DB table as `(item_id, owner_id, ciphertext,
-  nonce, algo, kdf_params, revision, updated_at, schema_version,
-  deleted_at)`.
+  contracts; implement the item table as `(item_id, owner_id, ciphertext,
+  nonce, algo, kdf_params, revision, updated_at, schema_version, deleted_at,
+  change_seq)`. Scope every item read, write, conflict response, and delete by
+  the authenticated principal; never use a client-supplied `ownerId` as
+  authorization. Store account KDF bootstrap metadata separately.
 - Do not implement account-auth password storage without a dedicated ADR
   (e.g., bcrypt/argon2id for account passwords, token rotation policy) —
   flagged above as unresolved.
