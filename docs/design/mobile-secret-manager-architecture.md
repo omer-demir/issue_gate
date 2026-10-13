@@ -2,6 +2,21 @@
 
 Status: Proposed (ideation stage — architecture decisions)
 
+> **Note (client-platform decision superseded by ADR-0005/ADR-0006):** this
+> document's client-platform and storage-engine detail (point 2 and the
+> Decision in §3 below: "shared TypeScript core + React Native mobile client
+> + web client", "custom backend + React Native/web shared-core clients")
+> reflects one of two lineages that were merged into `main` without
+> reconciliation. The product owner has since mandated **Flutter for mobile,
+> Next.js for web** (separate codebases, no shared UI/business-logic source)
+> and a **TypeScript/Node.js API backed by a NoSQL document store**. See
+> `docs/adr/0005-client-platform-flutter-mobile-nextjs-web.md` and
+> `docs/adr/0006-typescript-api-nosql-store.md` for the authoritative,
+> reconciling decisions. Points 1 ("client-side, zero-knowledge encryption")
+> and 4 ("master-password-derived vault unlock") below, and the API/
+> conflict-handling contract in §4, are platform-agnostic and remain
+> authoritative.
+
 ## 1. Decision Summary
 
 The repository is greenfield (verified: only `README.md` exists; single
@@ -12,10 +27,13 @@ ADRs and summarized here:
    stores/transmits opaque ciphertext. (ADR-0001)
 2. **Shared TypeScript core + React Native mobile client + web client** —
    one audited implementation of crypto/sync logic, thin platform shells.
-   (ADR-0002)
+   (ADR-0002) — **superseded, see note above: Flutter mobile + Next.js web,
+   no shared core (ADR-0005).**
 3. **Minimal custom sync backend** storing encrypted blobs with
    revision-based optimistic concurrency, not an adopted Bitwarden-compatible
-   server (deferred as a fallback). (ADR-0003)
+   server (deferred as a fallback). (ADR-0003) — **storage engine superseded:
+   NoSQL document store, not a relational store (ADR-0006); API/conflict
+   contract unchanged.**
 4. **Master-password-derived vault unlock, decoupled from account auth**,
    with OS-biometric-gated local key caching on mobile. (ADR-0004)
 
@@ -57,6 +75,13 @@ scope emerges, and Option C's mobile-only variant named as the explicit
 fallback if deep OS integration needs exceed React Native's bridging
 capability.
 
+> **Superseded by ADR-0005/ADR-0006**: "Option A" above now means a custom
+> backend (TypeScript/Node.js API, NoSQL document store) paired with
+> **separate** Flutter (mobile) and Next.js (web) client codebases — not a
+> shared React Native/TypeScript-core client. Option B (Vaultwarden fallback)
+> and the operational-complexity/cost comparisons in the table above are
+> otherwise unaffected by the client-platform and storage-engine change.
+
 ## 4. Interfaces and Contracts
 
 ### 4.1 Encrypted Item Envelope (client ⇄ client, via backend storage)
@@ -83,6 +108,12 @@ interface KdfBootstrapMetadata {
   kdfParams: Omit<EncryptedItemEnvelope["kdfParams"], "saltRef">;
 }
 ```
+
+> **Note**: this envelope shape is the OpenAPI/JSON-Schema contract named in
+> ADR-0005 §Decision point 4 and is stored one-document-per-item in the
+> NoSQL `items` collection per ADR-0006 §Decision point 2, rather than a
+> relational `item` table. The field names, invariants, and error semantics
+> below are unchanged by either ADR.
 
 Invariants:
 - `ciphertext`/`nonce` are opaque to the backend; backend MUST NOT attempt
@@ -155,6 +186,12 @@ own `schemaVersion` so the client core can run decrypt-time migrations
 
 ### 4.3 Client Core Adapter Interfaces (ADR-0002 boundary)
 
+> **Superseded by ADR-0005**: the single shared-core package below does not
+> exist in the final architecture. Flutter (Dart) and Next.js (TypeScript)
+> each implement this adapter boundary independently against the same
+> envelope/API contract above, verified by a shared cross-language
+> test-vector suite (ADR-0005 §Validation) instead of shared source code.
+
 ```ts
 interface SecretStorageAdapter {
   getCachedMasterKey(): Promise<Uint8Array | null>;   // from OS Keychain/Keystore (mobile) or in-memory (web)
@@ -199,13 +236,18 @@ its adapter *implementation* (Keychain/Keystore bridge; HTTP client).
 ### Handoff notes for planning/implementation agents
 - Start with the shared core package (crypto + envelope + adapter
   interfaces) and its test suite before any UI work, per ADR-0002 rollout
-  order.
+  order. — **Superseded by ADR-0005**: there is no shared core package;
+  start with the Flutter mobile crypto/envelope module and its test suite
+  (ADR-0005 §Migration rollout order), then the Next.js equivalent.
 - The backend's `v1` API and DB schema in §4.2 are implementation-ready
   contracts; implement the item table as `(item_id, owner_id, ciphertext,
   nonce, algo, kdf_params, revision, updated_at, schema_version, deleted_at,
   change_seq)`. Scope every item read, write, conflict response, and delete by
   the authenticated principal; never use a client-supplied `ownerId` as
   authorization. Store account KDF bootstrap metadata separately.
+  — **Storage engine superseded by ADR-0006**: implement the above as an
+  `items` NoSQL document collection (one document per field set listed),
+  not a relational table; field names and semantics are unchanged.
 - Do not implement account-auth password storage without a dedicated ADR
   (e.g., bcrypt/argon2id for account passwords, token rotation policy) —
   flagged above as unresolved.

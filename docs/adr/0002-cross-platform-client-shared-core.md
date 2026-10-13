@@ -1,6 +1,12 @@
 # ADR-0002: Cross-Platform Client with a Shared Encryption/Sync Core
 
-Status: Proposed
+Status: Superseded by ADR-0005 (`0005-client-platform-flutter-mobile-nextjs-web.md`)
+
+> **Note (superseded):** the product owner has mandated Flutter for mobile and
+> Next.js for web as separate codebases, overriding this ADR's React Native +
+> shared-TypeScript-core decision. This ADR is kept for historical context;
+> its dependency-direction and adapter-interface guidance (core independent of
+> transport/persistence) is restated per-platform in ADR-0005.
 
 ## Context
 
@@ -104,3 +110,5 @@ implements against its own secure storage and HTTP client.
 - Need for deep OS integration (system-wide autofill, share-sheet) that
   React Native bridges cannot reasonably support.
 - Team grows and can support fully native codebases.
+- **(Occurred)** Product direction mandated Flutter mobile + Next.js web —
+  see ADR-0005, which supersedes this ADR.
