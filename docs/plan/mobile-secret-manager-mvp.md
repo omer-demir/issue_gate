@@ -1,6 +1,6 @@
 # Mobile Secret Manager — MVP Implementation Plan
 
-Status: Draft — blocked on MSM-1 (architecture reconciliation) before any coding story starts.
+Status: Draft — MSM-1 (architecture reconciliation) resolved via ADR-0005 and ADR-0006; coding stories may now proceed.
 Prefix: `MSM`. IDs are stable; do not renumber once referenced elsewhere.
 
 ## Goal and Scope
@@ -28,15 +28,14 @@ sync backend (account auth, vault bootstrap, item sync API), CI/CD and environme
 mobile.
 
 **Out of scope for this MVP backlog** (carried over from existing design docs, re-confirmed here):
-sharing/teams, web client (explicitly phased after mobile per the shared-core ADR's build order —
-see Sequencing), compliance/audit-logging/export requirements, real-time push sync, multi-device
+sharing/teams, web client (explicitly phased after mobile per ADR-0005's rollout order — see
+Sequencing), compliance/audit-logging/export requirements, real-time push sync, multi-device
 "log out other sessions" revocation UI, app-store production release/compliance review.
 
-## Critical Blocker — Unresolved Architecture Conflict (must read before MSM-2+)
+## Architecture Conflict — Resolved (MSM-1 closed)
 
-Repository investigation (this stage, re-verified against `git log` and file contents) confirms
-the prior research finding: **two independent, mutually exclusive architecture decisions exist in
-`main`, both merged without reconciliation**:
+Repository investigation previously found two independent, mutually exclusive architecture
+decisions merged into `main` without reconciliation:
 
 - **Lineage A (React Native / TypeScript, PR #1, commits `0bdfd0b`/`0625b99`)**: `docs/adr/0001-client-side-zero-knowledge-encryption.md`
   → `docs/adr/0002-cross-platform-client-shared-core.md` (React Native mobile + separate web client,
@@ -48,25 +47,41 @@ the prior research finding: **two independent, mutually exclusive architecture d
   in `docs/design/mobile-secret-manager-technical-design.md` and reconciled with UX in
   `docs/design/mobile-secret-manager-design-handoff.md`.
 
-Both files are numbered `ADR-0001`; neither supersedes the other. **This plan cannot pick the
-winning client stack — that is an architecture decision outside this agent's scope.** To keep the
-backlog coherent and actionable now, this plan:
+**Resolution**: an explicit, authoritative product-owner directive reconciles both lineages via two
+new superseding ADRs:
 
-1. Treats **MSM-1** (ratify architecture via a superseding ADR) as a hard blocking prerequisite to
-   every coding story (MSM-2 onward). No backend/mobile/frontend story should start implementation
-   before MSM-1 closes.
-2. Uses **Lineage A** as the illustrative technical baseline for API/contract details in this plan
-   (sync endpoints, DB shape, adapter boundaries) because it is the more complete, internally
-   cross-referenced chain (4 ADRs covering crypto, client stack, backend, and auth) with a
-   concrete, implementation-ready `v1` API — **not** because it is hereby decided as final.
-3. Reuses the **stack-agnostic product/UX decisions** from Lineage B's handoff doc (Recovery Kit,
+- **`docs/adr/0005-client-platform-flutter-mobile-nextjs-web.md`** — ratifies **Flutter for mobile**
+  (iOS/Android) and **Next.js for web**, as separate codebases sharing only a versioned API/data
+  contract (no shared UI or business-logic source). Supersedes `0001-mobile-web-secret-manager-architecture.md`
+  §1 and `0002-cross-platform-client-shared-core.md` in full.
+- **`docs/adr/0006-typescript-api-nosql-store.md`** — ratifies a **TypeScript (Node.js) API** backed
+  by a **NoSQL document store**, keeping ADR-0003's API/auth/conflict contract intact and overriding
+  only its relational-storage-engine detail. Supersedes `0003-minimal-custom-sync-backend.md`'s
+  storage-engine clause only.
+
+Both `ADR-0001` files, `0002`, and `0003` have had their `Status` fields updated to point at these
+superseding ADRs; their platform-agnostic crypto/auth decisions (zero-knowledge model, key
+hierarchy, biometric gating) remain unchanged and authoritative.
+
+**Practical effect on this plan**:
+1. Stories below that assumed "Lineage A detail, confirm in MSM-1" now resolve to: mobile = Flutter
+   (not React Native), web = Next.js (not plain React + bundler), API = TypeScript/Node.js (as
+   Lineage A already assumed), storage = NoSQL document store (not Postgres/SQLite, per ADR-0006).
+   REST paths, request/response shapes, and the optimistic-concurrency/conflict model are otherwise
+   unchanged from ADR-0003/this plan's existing acceptance criteria.
+2. MVP ships **mobile-only first, web deferred** (ADR-0005's rollout order: contract + test vectors
+   → Flutter mobile → Next.js web), matching this plan's existing Increment 1/2/3 sequencing and
+   "web client... out of scope" note above — no change needed to Sequencing.
+3. The **stack-agnostic product/UX decisions** reused from Lineage B's handoff doc (Recovery Kit,
    biometric-as-convenience-only, offline/pending-sync behavior, side-by-side conflict resolution,
-   separate account-password vs. master-password reset flows) as acceptance criteria throughout,
-   since these describe user-facing behavior, not a framework choice, and both lineages agree on
-   them.
-4. If MSM-1 ratifies Lineage B (Flutter) instead, only the *implementation* detail of stories
-   tagged "(Lineage A detail, confirm in MSM-1)" changes (e.g., REST paths, adapter interface
-   names); story IDs, acceptance criteria intent, and sequencing below remain valid.
+   separate account-password vs. master-password reset flows) are unaffected by this resolution and
+   remain the acceptance-criteria baseline throughout.
+4. `docs/design/mobile-secret-manager-architecture.md` (Lineage A synthesis) and
+   `docs/design/mobile-secret-manager-technical-design.md` / `mobile-secret-manager-design-handoff.md`
+   (Lineage B synthesis) each still describe one superseded lineage's implementation detail (React
+   Native vs. Flutter-Web, Postgres vs. NoSQL) and should be reconciled into a single design doc
+   reflecting ADR-0005/ADR-0006 as a follow-up; this is **not** a coding-story blocker since the
+   story-level acceptance criteria below are already framework-agnostic or updated per point 1.
 
 ## Story Table
 
@@ -98,16 +113,24 @@ backlog coherent and actionable now, this plan:
 **Disciplines**: none directly (architecture decision; all four disciplines are blocked by it).
 **Outcome**: As the team, we have one authoritative client-stack decision so backend/mobile/UI
 work can proceed without contradicting design docs.
-**Acceptance criteria**:
+**Status: Closed.** Resolved by `docs/adr/0005-client-platform-flutter-mobile-nextjs-web.md`
+(client platform: Flutter mobile + Next.js web) and `docs/adr/0006-typescript-api-nosql-store.md`
+(API: TypeScript/Node.js; storage: NoSQL document store). Both prior conflicting `ADR-0001` files
+have had their `Status` fields updated to reference the superseding ADRs.
+**Acceptance criteria** (for the historical record):
 1. Given the two conflicting `ADR-0001` files, when this story closes, then a new ADR (e.g.
    `0005-supersede-client-stack-decision.md`) explicitly states which lineage (A or B) is
-   authoritative and marks the other `ADR-0001` as superseded in its own file header.
+   authoritative and marks the other `ADR-0001` as superseded in its own file header. — **Met**:
+   neither lineage won outright; ADR-0005 records an explicit third option (Flutter mobile +
+   Next.js web) and both prior `ADR-0001` files are marked superseded.
 2. Given the decision, when recorded, then it states whether MVP ships mobile-only first with web
    deferred (Lineage A's phase order) or a single shared mobile+web codebase (Lineage B), since this
-   changes MSM-14/18 scope.
+   changes MSM-14/18 scope. — **Met**: mobile-only first, web deferred (ADR-0005 rollout order);
+   MSM-14/18 scope is unchanged.
 3. Given MVP-scope ambiguity flagged by prior research (no MVP scope/timeline decision existed),
    when this story closes, then it also confirms or amends the MVP boundary assumed in this plan
-   (Story Table + Out of scope section).
+   (Story Table + Out of scope section). — **Met**: MVP boundary unchanged (mobile + backend sync,
+   web deferred).
 **Dependencies**: none. **Non-functional**: none (decision record only).
 **Out of scope**: writing or changing any application code.
 
@@ -116,6 +139,10 @@ work can proceed without contradicting design docs.
 Infrastructure: not applicable.
 **Outcome**: As a client application, I have one audited crypto/vault module so mobile and UI
 layers share identical key-derivation, encryption, and envelope logic instead of reimplementing it.
+**Note (post-MSM-1)**: per ADR-0005, mobile (Flutter/Dart) and web (Next.js/TypeScript) do **not**
+share a single core module; each implements this contract independently in its own language,
+verified against a shared cross-language test-vector suite. The acceptance criteria below describe
+the required *behavior* of each implementation, not a single shared package.
 **Acceptance criteria**:
 1. Given a master password and a stored KDF salt, when the core derives a key, then it uses
    Argon2id by default with a PBKDF2-SHA256 fallback, and the chosen KDF + params are recorded
@@ -129,11 +156,12 @@ layers share identical key-derivation, encryption, and envelope logic instead of
    rotated, then only the DEK wrapping is re-encrypted; individual secret items are not
    re-encrypted.
 5. The core exposes platform-agnostic adapter interfaces (secure storage, HTTP/sync transport) so
-   platform shells implement only the adapter, never crypto logic (ADR-0002 boundary, pending
-   MSM-1 confirmation of which language/stack).
-**Dependencies**: MSM-1. **Non-functional**: security — use one audited, maintained crypto library,
-no hand-rolled primitives; unit tests cover round-trip encrypt/decrypt, tamper-detection, and
-KDF-fallback paths.
+   platform shells implement only the adapter, never crypto logic (ADR-0005 boundary: Flutter's
+   Dart implementation and the Next.js TypeScript implementation each own their own adapters).
+**Dependencies**: MSM-1. **Non-functional**: security — use one audited, maintained crypto library
+per platform (e.g. a vetted Dart crypto package for Flutter, Web Crypto/libsodium-js for Next.js),
+no hand-rolled primitives; unit tests (per platform) cover round-trip encrypt/decrypt,
+tamper-detection, and KDF-fallback paths, plus the shared test-vector suite from ADR-0005.
 **Out of scope**: network transport implementation, platform secure-storage implementation (MSM-3).
 
 ### MSM-3 — Mobile secure-storage and biometric-gating adapter
@@ -289,6 +317,7 @@ hashed with a memory-hard algorithm; observability — auth failures are logged 
 (ties to MSM-19).
 **Out of scope**: SSO/OAuth providers; this covers only the account-auth mechanism, not vault
 unlock (which is purely client-side, MSM-2).
+**Implementation note (post-MSM-1)**: built as a Node.js/TypeScript API per ADR-0006.
 
 ### MSM-11 — Backend vault bootstrap endpoint (KDF params issuance)
 **Disciplines**: backend.
@@ -329,6 +358,9 @@ concurrent edits across devices are never silently overwritten.
 plaintext field; performance — upsert/read endpoints respond within a defined budget under expected
 single-user load (to be set once load expectations exist).
 **Out of scope**: real-time push notifications of changes (polling/pull-on-open only for MVP).
+**Implementation note (post-MSM-1)**: item records are stored as documents in a NoSQL store
+(`items` collection, one document per item) per ADR-0006, with conflict detection implemented via
+the store's native conditional-write mechanism rather than a SQL transaction.
 
 ### MSM-13 — Backend sync API: change feed, cursor pagination, tombstones
 **Disciplines**: backend.
@@ -453,8 +485,8 @@ per existing research; revisit if compliance requirements are introduced).
 
 ## Sequencing and Release Increments
 
-1. **Increment 0 — Unblock (MSM-1)**: architecture ratification. No other story starts until this
-   closes; treat as the smallest possible "increment" (a decision record, not shippable software).
+1. **Increment 0 — Unblock (MSM-1)**: architecture ratification. **Closed** — see "Architecture
+   Conflict — Resolved" above.
 2. **Increment 1 — Local-only mobile vertical slice (MSM-2 → MSM-9)**: a fully usable, single-device
    mobile vault (create, unlock, view/copy, CRUD, Recovery Kit) with no backend dependency. This is
    independently demoable and de-risks the crypto/storage contract before any sync complexity, per
@@ -478,12 +510,14 @@ per existing research; revisit if compliance requirements are introduced).
 
 ## Risks, Assumptions, Open Questions
 
-- **[Blocking] Architecture conflict (MSM-1)**: two contradictory, both-merged `ADR-0001`s
-  (Flutter vs. React Native) must be reconciled before coding stories start. This plan assumes
-  Lineage A's technical details as a placeholder baseline only.
+- **[Resolved]** Architecture conflict (MSM-1): two contradictory, both-merged `ADR-0001`s
+  (Flutter vs. React Native) have been reconciled by `docs/adr/0005-client-platform-flutter-mobile-nextjs-web.md`
+  (Flutter mobile + Next.js web) and `docs/adr/0006-typescript-api-nosql-store.md` (TypeScript API +
+  NoSQL store). Story-level technical details in this plan have been updated accordingly (see
+  per-story "Implementation note (post-MSM-1)" annotations).
 - **[Assumption] MVP boundary**: no prior MVP-scope decision existed in the repo; this plan assumes
-  "mobile app + backend sync, web deferred" as the MVP boundary. MSM-1 should confirm or correct
-  this.
+  "mobile app + backend sync, web deferred" as the MVP boundary. Confirmed unchanged by MSM-1's
+  resolution.
 - **[Risk] Clipboard exposure**: auto-clear TTL (MSM-6) is a documented, accepted residual risk on
   some platforms; no action needed beyond what's specified unless a stricter requirement emerges.
 - **[Open question] Compliance/audit/export requirements**: unresolved in all prior research and
@@ -498,3 +532,7 @@ per existing research; revisit if compliance requirements are introduced).
   real-device testing occurs (flagged under MSM-5 NFRs).
 - **[Assumption] Single environment team**: MSM-17's "no HA requirement for v1" assumption follows
   ADR-0003; revisit if usage or stakes grow per that ADR's revisit triggers.
+- **[Follow-up, non-blocking]** `docs/design/mobile-secret-manager-architecture.md` and
+  `docs/design/mobile-secret-manager-technical-design.md` / `-design-handoff.md` still describe
+  implementation detail from the two now-partially-superseded lineages (React Native/Postgres vs.
+  Flutter-Web) and should be reconciled into a single design doc reflecting ADR-0005/ADR-0006.

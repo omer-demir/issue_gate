@@ -7,6 +7,19 @@ one coherent handoff for planning/implementation agents. This document does not 
 source in full; it states what each got right, closes the gaps between them, and records explicit
 decisions on every UX-raised open question.
 
+> **Note (client-platform/storage superseded by ADR-0005/ADR-0006):** this document was written
+> against ADR-0001's single shared Flutter/Dart client and an unspecified SQL-leaning storage
+> engine. The product owner has since mandated **Flutter for mobile, Next.js for web as separate
+> codebases**, and a **TypeScript/Node.js API with a NoSQL document store** —
+> [ADR-0005](../adr/0005-client-platform-flutter-mobile-nextjs-web.md) and
+> [ADR-0006](../adr/0006-typescript-api-nosql-store.md). None of the UX-facing decisions below
+> (clipboard TTL, account-login vs. master-password separation, Recovery Kit, biometric-as-
+> convenience-only, offline parity, conflict-resolution UI) depend on which client framework or
+> storage engine implements them — they describe user-facing behavior each platform must satisfy
+> independently, per the [updated technical design](./mobile-secret-manager-technical-design.md).
+> §2.4's "mobile backs it with Keychain/Keystore, web with IndexedDB" framing remains accurate; only
+> the web implementation's host framework (Next.js/TypeScript, not a Flutter Web target) has changed.
+
 ## 1. Alignment check (no conflicts found)
 
 The two designs were produced independently but are consistent on every point both addressed:
@@ -74,7 +87,8 @@ before the affected surfaces are built:
 3. **Onboarding flows for §2.1 and §2.2 above**: two new UX flows are required (account-password
    reset vs. vault recovery; Recovery Kit issuance) before implementation of onboarding/auth
    screens begins. These are UX design gaps, not technical ones — the technical contracts
-   (`CryptoCore.generateRecoveryKit`-equivalent, per tech design §3.1) already support them.
+   (`CryptoCore.generateRecoveryKit`-equivalent, per tech design §3.1) already support them,
+   independently in each platform's own implementation (ADR-0005).
 4. **Sharing/teams**: confirmed out of scope for v1 by both designs; revisit only if the
    requirement set expands (ADR Revisit Triggers).
 
@@ -82,14 +96,16 @@ before the affected surfaces are built:
 
 No changes to the contracts defined in the technical design are required by this reconciliation.
 `CryptoCore`, `SecretStore`, `SyncClient` (tech design §3) and the ADR's key hierarchy stand as
-specified. The only additions are the UX-flow clarification in §2.1 (two distinct reset entry
-points) and the two new onboarding flows in §3 above — both are UX-design-stage work, not
-architecture changes.
+specified, each now implemented per-platform per ADR-0005 rather than via one shared core, and
+backed by a NoSQL store per ADR-0006. The only additions are the UX-flow clarification in §2.1 (two
+distinct reset entry points) and the two new onboarding flows in §3 above — both are UX-design-stage
+work, not architecture changes.
 
 ## 5. Handoff notes for planning agents
 
-- Build order should follow the tech design's phased plan (ADR Migration/Rollout): local-only
-  mobile crypto core + UI first (independently shippable), then relay sync, then web client.
+- Build order should follow ADR-0005's phased rollout: shared API contract + test-vector suite
+  first, then Flutter mobile (independently shippable), then the relay/API (ADR-0006), then Next.js
+  web.
 - Before UI implementation of onboarding/Lock-screen/Account-settings starts, commission the two
   carried-forward UX flows in §3 above (reset vs. recovery; Recovery Kit issuance) — implementing
   against the current UX summary alone would conflate the two reset paths.
@@ -97,9 +113,11 @@ architecture changes.
   and conflict resolution behave identically on mobile and web, since the UX summary did not
   originally distinguish them and the technical doc only tabulated "Availability (mobile)"
   explicitly.
-- No new ADR is required for this synthesis; all decisions above are clarifications/closures of
-  already-decided architecture (ADR-0001), not new architectural tradeoffs.
+- No new ADR is required for this document's UX-reconciliation content; the client-platform and
+  storage-engine changes are already recorded in ADR-0005/ADR-0006.
 - **Recommend persisting the UX design as a repository artifact** (e.g.
   `docs/design/mobile-secret-manager-ux-design.md`) so future stages can cite it directly instead
   of relying on the stage-summary text; this handoff currently cites the ux-design stage summary
-  because no such file exists yet.
+  because no such file exists yet. The current task's UX stage (design-synthesis, this run) again
+  escalated out of scope/write-access rather than producing new UX content, so this gap remains
+  open.

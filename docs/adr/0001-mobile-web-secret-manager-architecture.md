@@ -1,7 +1,20 @@
 # ADR-0001: Zero-Knowledge Architecture for Cross-Platform Secret Manager
 
 ## Status
-Proposed
+Superseded by ADR-0005 (client-platform decision) and ADR-0006 (backend
+storage-engine decision). See note below.
+
+> **Note (superseded, recorded by ADR-0005/ADR-0006):** this file's Decision
+> §1 ("Shared client codebase (Flutter) across iOS, Android, and Web")
+> conflicted with `0002-cross-platform-client-shared-core.md` and is
+> superseded by `0005-client-platform-flutter-mobile-nextjs-web.md`, which
+> ratifies Flutter for mobile and Next.js for web as separate codebases.
+> Decision §2 ("Thin ciphertext relay backend") and §3 ("Client-side key
+> hierarchy and local secure storage") remain platform-agnostic and
+> authoritative; their storage-engine detail is further refined by
+> `0006-typescript-api-nosql-store.md`. The zero-knowledge crypto principles
+> here are also recorded independently in
+> `0001-client-side-zero-knowledge-encryption.md`.
 
 ## Context
 
@@ -50,6 +63,10 @@ business-logic layer, with a platform-isolated storage/crypto adapter layer
 satisfies "integration easily ... both natively on mobile and web" without
 maintaining three separate client stacks, which a single-developer project
 cannot sustain long-term.
+
+> **Superseded by ADR-0005**: the product owner has since mandated Flutter for
+> mobile and Next.js (not Flutter Web) for web as separate codebases. See
+> `0005-client-platform-flutter-mobile-nextjs-web.md`.
 
 ### 2. Thin "ciphertext relay" backend, not a full application server
 The backend never receives, stores, or processes plaintext secrets or the
@@ -182,5 +199,6 @@ backend proves too costly (see Revisit Triggers).
 - Flutter Web proves inadequate (performance, missing browser API, e.g.
   reliable clipboard/biometric WebAuthn integration) during Phase 3 validation
   — revisit Decision 1 and fall back to Option D for the web surface only.
+  **(Resolved by ADR-0005: web now uses Next.js, not Flutter Web.)**
 - Usage grows beyond a single user/device set such that relay availability or
   scale becomes a real concern — revisit the "thin relay, no HA" choice.

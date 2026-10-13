@@ -1,6 +1,13 @@
 # ADR-0003: Minimal Custom Sync Backend Storing Only Encrypted Blobs
 
-Status: Proposed
+Status: Superseded in part by ADR-0006 (`0006-typescript-api-nosql-store.md`) — storage-engine clause only; API/auth/conflict contract below remains authoritative.
+
+> **Note (partially superseded):** the product owner has mandated a NoSQL
+> document store, overriding only this ADR's storage-engine clause ("a
+> standard relational store (e.g., Postgres/SQLite)" below). The API
+> contract, auth model, optimistic-concurrency/conflict semantics, and
+> change-feed/tombstone design remain authoritative and are restated in
+> document-store terms in ADR-0006.
 
 ## Context
 
@@ -33,6 +40,10 @@ conflict detection, and never process secret content. Concretely:
   authenticated principal and scopes every item operation, including conflict
   responses, to that principal. Clients cannot use `owner_id` to claim or
   access another account's records.
+
+  > **Superseded by ADR-0006**: the storage engine is now a NoSQL document
+  > store (the `item` table above becomes an `items` document collection with
+  > the same fields); the relational-store detail here is historical only.
 - Account-level KDF bootstrap metadata (Argon2id parameters and the actual
   per-user salt) is stored separately as `(owner_id, salt_ref, salt,
   kdf_params, updated_at)` and returned by authenticated
@@ -119,3 +130,5 @@ conflict detection, and never process secret content. Concretely:
   Vaultwarden/Bitwarden-compatible protocol instead of extending the custom
   one.
 - Need for real-time collaborative editing → revisit CRDT-based sync.
+- **(Occurred)** Product direction mandated a NoSQL store — see ADR-0006,
+  which supersedes this ADR's storage-engine clause.

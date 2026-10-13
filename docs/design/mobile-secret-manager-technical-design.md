@@ -5,6 +5,24 @@ Read the ADR first for the decision rationale; this document specifies the
 resulting boundaries, interfaces, and data flows precisely enough for planning
 and implementation.
 
+> **Note (client-platform detail superseded by ADR-0005; storage engine
+> superseded by ADR-0006):** this document was written against ADR-0001's
+> "single shared Flutter/Dart codebase across iOS, Android, and Web" client
+> architecture. The product owner has since mandated **Flutter for mobile and
+> Next.js for web as separate codebases with no shared UI/business-logic
+> source** — see
+> [ADR-0005](../adr/0005-client-platform-flutter-mobile-nextjs-web.md). The
+> `CryptoCore`/`SecretStore` contracts in §3 remain the correct *shape* each
+> platform must implement, but §1's "shared Flutter client" framing and §3's
+> "identical across all three client targets" claim no longer hold for web:
+> Next.js implements an equivalent TypeScript/Web-Crypto module independently,
+> verified against the Dart implementation only via ADR-0005's shared
+> cross-language test-vector suite, not shared source. Backend storage is a
+> NoSQL document store per
+> [ADR-0006](../adr/0006-typescript-api-nosql-store.md); nothing in this
+> document names a specific SQL engine, so the API/data-ownership/data-flow
+> content below is otherwise unaffected and remains authoritative.
+
 ## 1. System Boundaries
 
 ```
@@ -36,6 +54,17 @@ and implementation.
                        └──────────────────┘
 ```
 
+> **Superseded by ADR-0005**: the "Flutter Client (shared), target: Web" box
+> above is replaced by a separate **Next.js (React/TypeScript)** client. It
+> connects to the same relay/`SyncService` over the same HTTPS/JSON contract
+> (§3.3) and implements its own `UI ─ ViewModel ─ CryptoCore`-equivalent
+> stack in TypeScript, running vault cryptography client-side in the browser
+> via Web Crypto/a vetted JS library (never in a Next.js server component or
+> API route). Its `SecretStore` equivalent is still IndexedDB,
+> ciphertext-only, as pictured. The Flutter box (left) is unchanged and
+> applies to mobile (iOS/Android) only. `Datastore` is a NoSQL document store
+> per ADR-0006.
+
 **Trust boundary**: everything left of (and including) `CryptoCore` holds
 plaintext secrets and key material, in memory only, on the user's own device.
 Everything at or beyond `SyncClient` — the network, the relay, and the
@@ -49,7 +78,7 @@ side is permitted to decrypt secret values, by design (not just by policy).
 |---|---|---|---|
 | Master password | User (never transmitted or stored anywhere) | Nowhere persistent; entered each unlock | N/A |
 | Master key, DEK | Client, in-memory only during a session | RAM only (mobile may wrap a re-unlock convenience key in OS keystore, never the raw DEK) | Raw key bytes |
-| Secret item plaintext (title, username, password, URL, notes) | Client | RAM during use; ciphertext form in local `SecretStore` | Decrypted Dart objects, never logged |
+| Secret item plaintext (title, username, password, URL, notes) | Client | RAM during use; ciphertext form in local `SecretStore` | Decrypted Dart objects (mobile) / in-memory TypeScript objects (web), never logged |
 | Secret item ciphertext | Client authoritative copy; relay holds a replica for sync | Local `SecretStore` (Keychain/Keystore/IndexedDB) + relay `Datastore` | AES-256-GCM blob (nonce + ciphertext + tag) |
 | Item metadata (id, category, timestamps, version) | Relay is the sync source of truth; client mirrors it | Relay `Datastore` + local `SecretStore` | Plaintext JSON (non-sensitive) |
 | Account auth credential | Relay (`AuthService`) | Relay `Datastore`, Argon2id-hashed | Hash + salt + KDF params |
@@ -57,7 +86,12 @@ side is permitted to decrypt secret values, by design (not just by policy).
 
 ## 3. Core Interfaces
 
-### 3.1 `CryptoCore` (Dart, shared by all targets)
+### 3.1 `CryptoCore` (per-platform implementation of this contract)
+
+> **Note (ADR-0005)**: this interface is shown in Dart since it is the
+> mobile (Flutter) implementation. Next.js implements the equivalent contract
+> in TypeScript against Web Crypto/a vetted JS crypto library; method names
+> and behavior below apply to both, independently implemented.
 
 ```dart
 abstract class CryptoCore {
@@ -94,8 +128,11 @@ abstract class CryptoCore {
 
 **Invariants**
 - `CryptoCore` never performs network or disk I/O; it is pure
-  cryptography, independently unit-testable, and identical across all three
-  client targets (mobile, web).
+  cryptography, independently unit-testable. Its behavior is identical
+  across mobile and web, but — per ADR-0005 — its *implementation* is not
+  shared source: Flutter and Next.js each own an independent module
+  implementing this contract, verified against each other only via ADR-0005's
+  shared JSON test-vector suite.
 - Any decrypt failure is a hard error, not a fallback-to-plaintext or
   fallback-to-empty-string path.
 - KDF parameters (algorithm, memory/iterations, salt) are stored alongside
@@ -122,19 +159,24 @@ abstract class SecretStore {
 ```
 
 Implementations:
-- **Mobile**: backed by `flutter_secure_storage` (iOS Keychain / Android
-  Keystore) for the wrapped DEK and any biometric re-unlock token; bulk item
-  ciphertext may live in a local encrypted SQLite file (e.g. SQLCipher) keyed
-  indirectly by the DEK, since OS keystores are not designed for bulk blob
-  storage.
-- **Web**: backed by IndexedDB, ciphertext only. No keystore equivalent exists;
-  this is the documented limitation from ADR-0001 Risks.
+- **Mobile (Flutter)**: backed by `flutter_secure_storage` (iOS Keychain /
+  Android Keystore) for the wrapped DEK and any biometric re-unlock token;
+  bulk item ciphertext may live in a local encrypted SQLite file (e.g.
+  SQLCipher) keyed indirectly by the DEK, since OS keystores are not designed
+  for bulk blob storage.
+- **Web (Next.js)**: backed by IndexedDB, ciphertext only, implemented as the
+  TypeScript equivalent of this interface (ADR-0005) rather than a Dart/Flutter
+  Web target. No keystore equivalent exists; this is the documented limitation
+  from ADR-0001 Risks, unchanged by the platform switch.
 
 ### 3.3 `SyncClient` (HTTPS/JSON contract with the relay)
 
 All endpoints are plain HTTPS/JSON. Auth uses a short-lived bearer token
 (issued at login, refreshed via refresh token) — standard session auth,
-**entirely separate from the vault master key**.
+**entirely separate from the vault master key**. The relay implementing
+these endpoints is a Node.js/TypeScript API per ADR-0006, backed by a NoSQL
+document store; the request/response shapes below are unaffected by that
+choice.
 
 ```
 POST /v1/auth/register
@@ -150,28 +192,24 @@ POST /v1/auth/login
   -> 401 { error: "invalid_credentials" }
 
 POST /v1/vault/bootstrap           // first-time vault creation
-  auth: Bearer accessToken
-  body: { wrappedDek, kdfParams }
+  auth: ******  body: { wrappedDek, kdfParams }
   -> 201 { vaultId }
   -> 409 { error: "vault_already_exists" }
 
 GET  /v1/vault/{vaultId}/items?sinceVersion={n}
-  auth: Bearer accessToken
-  -> 200 { items: [ { itemId, cipherText, nonce, tag, category, version, updatedAt } ],
+  auth: ******  -> 200 { items: [ { itemId, cipherText, nonce, tag, category, version, updatedAt } ],
            serverVersion }
   -> 404 { error: "vault_not_found" }
 
 PUT  /v1/vault/{vaultId}/items/{itemId}
-  auth: Bearer accessToken
-  body: { cipherText, nonce, tag, category, baseVersion }
+  auth: ******  body: { cipherText, nonce, tag, category, baseVersion }
   -> 200 { version, updatedAt }                       // accepted
   -> 409 { error: "version_conflict", serverItem: {...} }  // caller must
                                                             // resolve, see 3.4
   -> 413 { error: "payload_too_large" }   // item ciphertext size cap, e.g. 64 KiB
 
 DELETE /v1/vault/{vaultId}/items/{itemId}
-  auth: Bearer accessToken
-  -> 204
+  auth: ******  -> 204
   -> 404 { error: "item_not_found" }
 ```
 
@@ -184,6 +222,9 @@ DELETE /v1/vault/{vaultId}/items/{itemId}
   instead of misinterpreting them.
 - Adding new optional fields to item metadata (e.g., a future `favorite` flag)
   is additive and must not break clients that ignore unknown fields.
+- Per ADR-0005, a single OpenAPI/JSON-Schema definition for this contract is
+  the source of truth; Next.js and the TypeScript API consume it directly,
+  and Flutter mobile generates Dart models from it in CI.
 
 **Error semantics**
 - All error responses use a consistent `{ error: <machine_code>, message }`
@@ -242,7 +283,7 @@ reflects "syncing.../synced" status.`
 | Availability (mobile) | Fully functional offline for view/create/update | Local `SecretStore` is authoritative for UI; sync is async and best-effort |
 | Integrity | Tampered ciphertext must never be silently accepted as valid plaintext | AES-GCM auth tag verified on every decrypt; hard failure on mismatch |
 | Consistency | No silent data loss on concurrent edits | Explicit version-conflict surfacing (§3.4), never auto-merge |
-| Portability | One behavior across iOS/Android/Web | Shared Dart `CryptoCore` + `ViewModel`; only `SecretStore`/platform storage differs |
+| Portability | One behavior across iOS/Android/Web | Independently implemented per platform (Dart `CryptoCore`/`ViewModel` for mobile, TypeScript equivalent for web, ADR-0005), verified against a shared test-vector suite; only `SecretStore`/platform storage differs by design |
 | Recoverability | Losing the master password should not be an unrecoverable dead end if the user followed setup | Recovery Kit issued at vault creation (§2, §3.1) |
 
 ## 6. Open Questions (carried from design-context, not yet resolved)
@@ -261,21 +302,24 @@ reflects "syncing.../synced" status.`
    (e.g., for migrating off the service entirely) — not yet specified.
 4. **Sharing/teams**: explicitly out of scope for v1 per ADR-0001; confirm this
    matches actual need before committing to the single-tenant key model.
-5. **Hosting of the thin relay**: ADR-0001 deliberately leaves the concrete
-   hosting choice (self-managed VM vs. managed platform) open, since it does
-   not affect the client contract; should be decided at implementation
+5. **Hosting of the thin relay**: ADR-0006 names the storage engine (NoSQL)
+   but deliberately leaves the concrete vendor/hosting choice open, since it
+   does not affect the client contract; should be decided at implementation
    planning time based on actual cost/ops preference.
 
 ## 7. Handoff Notes for Planning / Implementation Agents
 
-- Build order should follow the phased rollout in ADR-0001 §Migration: Phase 1
-  (local-only crypto core + mobile UI) is independently shippable and testable
-  before any backend exists — start there.
-- `CryptoCore` and `SecretStore`/`SyncClient` interfaces above are the contracts
-  implementation agents should code against; treat them as the seam for unit
-  vs. integration testing.
+- Build order should follow the phased rollout in ADR-0005 §Migration: the
+  OpenAPI contract and shared test-vector suite first, then Flutter mobile
+  (independently shippable and testable before any backend/web exists),
+  then Next.js web.
+- `CryptoCore`, `SecretStore`, `SyncClient` interfaces above are the contracts
+  implementation agents should code against — once per platform (Flutter,
+  Next.js) per ADR-0005, and once for the TypeScript/Node.js API per
+  ADR-0006; treat them as the seam for unit vs. integration testing.
 - Resolve Open Question 1 (account-login vs. master password separation)
   before writing the `AuthService`/`POST /v1/auth/register` implementation,
   since it changes the request schema.
-- No infrastructure or vendor has been chosen for the relay hosting — that is
-  an implementation-planning decision, not an architecture one, per ADR-0001.
+- No specific vendor has been chosen for the relay's NoSQL store or hosting —
+  that is an implementation-planning decision, not an architecture one, per
+  ADR-0006.
