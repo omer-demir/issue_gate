@@ -19,3 +19,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Docker/VPS: never commit populated secrets files (see .env.example).
+.env
+backend.env

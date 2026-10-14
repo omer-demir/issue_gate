@@ -6,3 +6,6 @@ MVP story backlog and `docs/adr/` for the architecture decisions.
 - [`backend/`](backend/README.md) — sync service implementing MSM-10..MSM-13
   (account auth, vault KDF bootstrap, item sync with optimistic concurrency,
   change-feed/tombstones). TypeScript/Node.js per ADR-0006.
+- [`docs/ops/docker-and-vps.md`](docs/ops/docker-and-vps.md) — run the
+  backend locally with Docker Compose first, with an optional, documented
+  path to a single VPS host later (MSM-17-adjacent infrastructure).

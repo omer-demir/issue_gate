@@ -1,0 +1,49 @@
+# Local development Compose file (default, run first).
+#
+# Usage:
+#   cp .env.example .env   # optional, only needed to override defaults
+#   docker compose up --build
+#
+# This file is intentionally self-contained for a single developer running
+# the backend against its in-memory store (no external database is wired up
+# in application code yet; see backend/README.md "Known MVP limitations").
+# Nothing here deploys to any remote environment.
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: issue-gate-backend:local
+    container_name: issue-gate-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: "3000"
+      JWT_SECRET: ${JWT_SECRET:-dev-insecure-secret-change-me}
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-900}
+      REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-2592000}
+      CHANGE_FEED_PAGE_SIZE: ${CHANGE_FEED_PAGE_SIZE:-50}
+      CHANGE_FEED_RETENTION: ${CHANGE_FEED_RETENTION:-1000}
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+        reservations:
+          memory: 128M

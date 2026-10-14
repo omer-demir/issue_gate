@@ -1,0 +1,85 @@
+# Optional later VPS/single-host Compose file (MSM-17-adjacent: this is a
+# declarative starting point for "later I will consider moving to a VPS",
+# not a staging/production split with an approval gate — see
+# docs/ops/docker-and-vps.md for what a human must still decide/run).
+#
+# This file is standalone (not merged with docker-compose.yml) so the local
+# and VPS topologies stay independently reviewable. It adds a reverse proxy
+# terminating TLS and stops publishing the backend port directly to the
+# host.
+#
+# Usage (run manually on the VPS only, never from this agent):
+#   cp .env.example backend.env   # then fill in real secrets, never commit it
+#   docker compose -f docker-compose.prod.yml --env-file backend.env up -d --build
+#
+# Nothing in this repository applies this file; it is validated with
+# `docker compose -f docker-compose.prod.yml config` only.
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: issue-gate-backend:latest
+    container_name: issue-gate-backend
+    restart: always
+    env_file:
+      - backend.env
+    environment:
+      NODE_ENV: production
+    expose:
+      - "3000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+        reservations:
+          memory: 128M
+    networks:
+      - internal
+
+  reverse-proxy:
+    image: caddy:2.8.4-alpine
+    container_name: issue-gate-proxy
+    restart: always
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
