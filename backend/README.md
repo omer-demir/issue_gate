@@ -24,6 +24,17 @@ npm test            # vitest (31 tests across auth/vault/items/change-feed)
 npm run typecheck
 ```
 
+## Running with Docker
+
+A `Dockerfile` here builds a production-style image (multi-stage, non-root).
+For local Compose-based bring-up (default) and an optional later VPS path,
+see [`docs/ops/docker-and-vps.md`](../docs/ops/docker-and-vps.md); quick
+start from the repo root:
+
+```sh
+docker compose up --build
+```
+
 Environment variables (all optional in dev, `JWT_SECRET` required in
 `NODE_ENV=production`):
 
