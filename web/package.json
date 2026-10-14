@@ -1,0 +1,36 @@
+{
+  "name": "issue-gate-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Next.js web client for the Mobile+Web Secret Manager MVP (MSM-4..MSM-9, MSM-14/15 web realization per ADR-0005). Client-side zero-knowledge crypto only; the backend never receives plaintext or key material.",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "next": "^15.3.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.1.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.0.1",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.3.0",
+    "jsdom": "^25.0.0",
+    "typescript": "^5.5.3",
+    "vitest": "^2.1.0"
+  }
+}
