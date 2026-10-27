@@ -18,6 +18,10 @@ There is no root npm package or shared client-source package. Install and run ea
 
 ## Run locally
 
+### Devcontainer
+
+Open this repository in VS Code with Docker running and choose **Dev Containers: Reopen in Container**. The [devcontainer guide](.devcontainer/README.md) covers setup, running the app, and iOS host integration. The container includes Node.js 24, Caddy, and Flutter (no Android SDK), installs component dependencies, and forwards ports 3000, 4000, and 8080. iOS builds and Simulator/device runs still require Flutter and Xcode on a macOS host, outside the Linux container.
+
 ### Prerequisites
 
 Use Node.js **22.12+ on the 22.x line, or 24.x**, with npm (compatible with the locked backend test dependencies). For the integrated browser setup, install Caddy 2. Docker with Compose v2 is optional for running the API instead of Node. Mobile additionally requires a current stable Flutter SDK and platform tooling; see its guide.
@@ -69,14 +73,14 @@ For backend-only use, plain `docker compose up --build` exposes port 3000. No `.
 
 ### Mobile
 
-The Flutter sources do not include `android/` or `ios/` runners. Follow the [mobile setup](mobile/README.md#setup) to generate and configure them first. With the API on port 4000, run from `mobile/`:
+The Flutter sources do not include `android/` or `ios/` runners. Follow the [mobile setup](mobile/README.md#setup) to generate and configure the iOS runner on macOS first. With the API on port 4000, run from `mobile/` in a macOS host terminal:
 
 ```sh
 flutter pub get
-flutter run --dart-define=API_BASE_URL=http://10.0.2.2:4000/v1
+flutter run --dart-define=API_BASE_URL=http://localhost:4000/v1
 ```
 
-This URL is for an Android emulator. Use `http://localhost:4000/v1` for an iOS Simulator or a reachable host address for a physical device. Native clients connect directly to the API and do not need the browser proxy.
+This URL is for an iOS Simulator, including when the API port is forwarded from the devcontainer. Use a reachable host address for a physical device. Android development is optional and needs a separately installed Android SDK; its emulator uses `http://10.0.2.2:4000/v1`. Native clients connect directly to the API and do not need the browser proxy.
 
 ## Configuration changes
 
