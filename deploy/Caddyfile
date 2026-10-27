@@ -1,9 +1,7 @@
-# Reverse proxy for the optional later VPS deployment (docker-compose.prod.yml).
-#
-# Set the DOMAIN environment variable to your real domain name to get
-# automatic HTTPS via Let's Encrypt. Left at the default "localhost" this
-# serves the backend over HTTP only, suitable for a quick smoke test before
-# DNS is pointed at the host.
+# VPS proxy configuration; see docs/ops/docker-and-vps.md for prerequisites.
+# Set DOMAIN to a real hostname for public HTTPS. A bare localhost address
+# may use Caddy's local HTTPS certificates; it does not force plain HTTP.
+# Use Caddyfile.local for the loopback-only HTTP development setup.
 {$DOMAIN:localhost} {
 	encode gzip
 	reverse_proxy backend:3000

@@ -1,19 +1,9 @@
-# Optional later VPS/single-host Compose file (MSM-17-adjacent: this is a
-# declarative starting point for "later I will consider moving to a VPS",
-# not a staging/production split with an approval gate — see
-# docs/ops/docker-and-vps.md for what a human must still decide/run).
-#
-# This file is standalone (not merged with docker-compose.yml) so the local
-# and VPS topologies stay independently reviewable. It adds a reverse proxy
-# terminating TLS and stops publishing the backend port directly to the
-# host.
-#
-# Usage (run manually on the VPS only, never from this agent):
-#   cp .env.example backend.env   # then fill in real secrets, never commit it
-#   docker compose -f docker-compose.prod.yml --env-file backend.env up -d --build
-#
-# Nothing in this repository applies this file; it is validated with
-# `docker compose -f docker-compose.prod.yml config` only.
+# Standalone VPS configuration, not an overlay for docker-compose.yml.
+# NOT production-ready: persistence, proxy/backend network connectivity,
+# and other prerequisites remain unresolved. See docs/ops/docker-and-vps.md.
+# Prepare backend.env from .env.example with a real JWT_SECRET and DOMAIN.
+# Inspect without launching:
+# docker compose -f docker-compose.prod.yml --env-file backend.env config --quiet
 
 services:
   backend:
