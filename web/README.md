@@ -1,79 +1,70 @@
-# Web client — Mobile+Web Secret Manager MVP
+# Web client
 
-Next.js (App Router) + TypeScript client implementing the MVP UI flows
-against the backend sync API (`../backend`), per
-[ADR-0005](../docs/adr/0005-client-platform-flutter-mobile-nextjs-web.md).
-All vault cryptography (KDF, encrypt/decrypt) runs **client-side only**; the
-backend never receives plaintext, master passwords, Recovery Kit keys, or
-raw key material — only opaque ciphertext/salt/KDF-parameter metadata.
-
-## Scope note: why web (not Flutter mobile) in this change
-
-`docs/plan/mobile-secret-manager-mvp.md` sequences the MVP mobile-first with
-web deferred. This change implements the **web** realization of the same
-story set (MSM-4/5/6/7/8/9/14/15) because it was scoped as a web-UI
-implementation task; Flutter/Dart mobile is a distinct toolchain/discipline
-and is out of scope here (not applicable to a frontend/web implementation
-agent — see the task's story-applicability table).
+Next.js 15 App Router, React 19, and TypeScript client. Vault encryption runs in the browser through Web Crypto, not in Next.js server components or the API. Mobile has a separate Dart implementation; no UI or business-logic source is shared.
 
 ## Setup
 
-```bash
-npm install
-cp .env.example .env.local   # point at your running backend/
-npm run dev
+Use Node.js 22.12+ on 22.x, or 24.x, and npm. From `web/`:
+
+```sh
+npm ci
+cp .env.example .env.local
+npm run dev -- --port 3000
 ```
 
-## Scripts
+Also start the API on port 4000 and the local Caddy proxy as shown in the [root quick start](../README.md#backend-and-web). Open **http://localhost:8080**, not the direct Next.js port, to use the API.
 
-- `npm run dev` / `build` / `start` — Next.js dev/build/serve.
-- `npm run lint` — ESLint (`next/core-web-vitals`, `next/typescript`).
-- `npm run typecheck` — `tsc --noEmit`.
-- `npm test` / `npm run test:watch` — Vitest + React Testing Library.
+The API has no CORS middleware and `next.config.ts` has no API rewrites. The local proxy keeps browser requests on the same origin: `/v1/*` goes to Express and other paths go to Next.js. Native mobile clients do not need this proxy.
 
-## Architecture
+## Configuration
 
-- `src/lib/crypto.ts` — MSM-2 web realization: PBKDF2-SHA256 KDF, AES-256-GCM
-  envelope encrypt/decrypt, DEK wrap/unwrap, Recovery Kit key generation.
-- `src/lib/api.ts`, `src/lib/types.ts` — typed fetch client for the backend's
-  `auth`/`vault`/`items` routes.
-- `src/store/SessionProvider.tsx` — account-login session (tokens only,
-  `sessionStorage`; never key material).
-- `src/store/VaultProvider.tsx` — unlocked vault state. The DEK lives
-  **in-memory only** (a React ref) and is cleared on lock/sign-out; it is
-  never persisted to `localStorage`/`sessionStorage`/IndexedDB.
-- `src/app/**` — pages for register/login, vault setup (+ Recovery Kit
-  display), unlock, recovery, list/view/create/edit/delete secrets.
-- `src/components/**` — `FormField` (labelled + `aria-describedby` errors),
-  `Banner` (`aria-live` status), `ConflictDialog` (409 side-by-side),
-  `CopyButton` (clipboard clear after 30s), `PasswordStrength` (client-side
-  usability guard only, not a security boundary), `SecretForm`.
+`NEXT_PUBLIC_API_BASE_URL` is the only application-specific browser environment variable. The client appends paths such as `/auth/login` and `/items`, so the base must include `/v1` and must not end with `/`.
+
+| Setting | Use |
+|---|---|
+| `/v1` | Recommended with the local proxy or an equivalent same-origin deployment |
+| `https://api.example.com/v1` | Separate API origin; requires an explicitly configured CORS policy not supplied by this backend |
+| Unset | Code falls back to `http://localhost:4000`, which lacks `/v1` and is not a working setup for the current backend |
+
+Copying `.env.example` avoids that fallback. Restart the dev server after editing `.env.local`. Next.js embeds `NEXT_PUBLIC_*` values into production browser bundles at build time: rebuild when changing the API base. These values are public and must never contain credentials or signing secrets.
+
+Web Crypto and clipboard APIs require a secure browser context. Localhost is suitable for local development; use HTTPS for remotely hosted or LAN-accessed browser sessions. Do not disable browser security to work around CORS or mixed-content errors.
+
+## Development commands
+
+Run from `web/`:
+
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Next.js development server |
+| `npm run build` | Production build |
+| `npm start` | Serve the existing production build |
+| `npm run lint` | ESLint with Next.js/TypeScript rules |
+| `npm run typecheck` | TypeScript checks |
+| `npm test` | Vitest and React Testing Library tests |
+| `npm run test:watch` | Watch tests |
+
+Use the same API/proxy setup for local `build`/`start`. Existing tests cover crypto, password-strength feedback, and the secret form; they are not end-to-end coverage of login, recovery, or sync.
+
+## Code map
+
+| Path | Responsibility |
+|---|---|
+| `src/lib/api.ts`, `src/lib/types.ts` | HTTP client and manually maintained wire types |
+| `src/lib/crypto.ts` | KDF, AES-GCM, DEK wrapping, recovery-key generation |
+| `src/store/SessionProvider.tsx` | Account tokens/session in `sessionStorage` |
+| `src/store/VaultProvider.tsx` | In-memory unlocked key, items, pending edits, conflict handling |
+| `src/app/` | Register/login, setup/unlock/recovery, and secret CRUD pages |
+| `src/components/` | Forms, feedback, clipboard, and conflict UI |
 
 ### Cross-device vault key sync
 
-The backend only stores a vault's salt/KDF params (`POST/GET /vault/kdf`),
-never the wrapped DEK. To let a second device unlock the same vault without
-any backend schema change (out of scope for this change), the wrapped DEK
-(by master password) and the wrapped DEK (by Recovery Kit key) are stored
-together as the payload of a well-known opaque item,
-`itemId = "__vault_meta__"` (`algo: "vault-meta-v1"`), using the existing
-items sync API exactly as any other opaque ciphertext blob. This keeps the
-zero-knowledge contract intact (the backend still never inspects
-`ciphertext`/`nonce`) while enabling multi-device unlock and recovery.
+Both clients use a reserved `__vault_meta__` item for master-password and Recovery Kit DEK wraps. The [technical reference](../docs/design/mobile-secret-manager-technical-design.md#cross-device-vault-key-sync) owns the format and compatibility rules. The [backend API reference](../backend/README.md#api) owns request/response shapes.
 
-## Known limitations / follow-ups
+## Current limitations
 
-- **KDF**: ships PBKDF2-SHA256 only (the documented MVP fallback). Argon2id
-  (the long-term default per MSM-2 AC1) needs a vetted WASM dependency and
-  is a follow-up.
-- **Offline cache**: the secrets list is in-memory only per page load; an
-  offline edit is queued with a "Pending sync" badge, but there is no
-  IndexedDB-backed persistent offline cache yet (design handoff's full
-  offline-read requirement). Online/offline detection and the pending-sync
-  indicator are implemented (`useOnlineStatus`, `VaultProvider`).
-- **Token refresh**: the session uses the initial access token directly; a
-  401 after `expiresIn` requires signing in again rather than silently
-  refreshing via `/auth/refresh`.
-- **Biometric unlock (MSM-3/MSM-5 AC3)**: mobile-only by design; not
-  applicable to web.
-- Mobile (Flutter) implementation is not part of this change.
+The unlocked DEK is held in memory and cleared on lock/sign-out, not persisted to browser storage. The item cache and pending queue are also in memory: reloads or closing the tab lose pending work, and there is no IndexedDB-backed offline vault. Existing sessions use their initial access token rather than automatically refreshing it; an expired token requires signing in again.
+
+PBKDF2-SHA256 is implemented; Argon2id and shared Dart/TypeScript compatibility vectors are not. Clipboard clearing after 30 seconds is best-effort because browser permissions, focus, and background scheduling can prevent it. Biometric unlock is mobile-only.
+
+For manual review, exercise registration, setup/Recovery Kit acknowledgment, lock/unlock, CRUD, recovery, two-session conflicts, expired tokens, and offline/reconnect behavior with disposable data. Do not treat the current crypto tests as cross-platform or production-security certification.

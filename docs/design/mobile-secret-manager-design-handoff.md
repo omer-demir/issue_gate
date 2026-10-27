@@ -1,123 +1,57 @@
-# Design Handoff: Mobile + Web Secret Manager
+# UX behavior and development reference
 
-Reconciles the UX design (ux-design stage output, delivered as a stage summary — not yet
-persisted as a repository file) with the [technical design](./mobile-secret-manager-technical-design.md)
-and [ADR-0001](../adr/0001-mobile-web-secret-manager-architecture.md) (technical-design stage) into
-one coherent handoff for planning/implementation agents. This document does not repeat either
-source in full; it states what each got right, closes the gaps between them, and records explicit
-decisions on every UX-raised open question.
+This guide replaces the earlier task-stage handoff with the account/vault behavior developers need to preserve. It distinguishes intended UX from current limitations; use the [architecture guide](mobile-secret-manager-architecture.md#current-limitations) for implementation status and the [technical reference](mobile-secret-manager-technical-design.md) for formats and data flows.
 
-> **Note (client-platform/storage superseded by ADR-0005/ADR-0006):** this document was written
-> against ADR-0001's single shared Flutter/Dart client and an unspecified SQL-leaning storage
-> engine. The product owner has since mandated **Flutter for mobile, Next.js for web as separate
-> codebases**, and a **TypeScript/Node.js API with a NoSQL document store** —
-> [ADR-0005](../adr/0005-client-platform-flutter-mobile-nextjs-web.md) and
-> [ADR-0006](../adr/0006-typescript-api-nosql-store.md). None of the UX-facing decisions below
-> (clipboard TTL, account-login vs. master-password separation, Recovery Kit, biometric-as-
-> convenience-only, offline parity, conflict-resolution UI) depend on which client framework or
-> storage engine implements them — they describe user-facing behavior each platform must satisfy
-> independently, per the [updated technical design](./mobile-secret-manager-technical-design.md).
-> §2.4's "mobile backs it with Keychain/Keystore, web with IndexedDB" framing remains accurate; only
-> the web implementation's host framework (Next.js/TypeScript, not a Flutter Web target) has changed.
+## Account login versus vault unlock
 
-## 1. Alignment check (no conflicts found)
+Use distinct labels and distinct secrets:
 
-The two designs were produced independently but are consistent on every point both addressed:
+| Operation | Credential | Responsibility |
+|---|---|---|
+| Account registration/login | Account password | API authenticates access to the user's encrypted data |
+| Vault setup/unlock | Master password | Client derives a key and unwraps the DEK locally |
+| Vault recovery | Recovery Kit plus a new master password | Client recovers and re-wraps the existing DEK |
+| Biometric convenience | Device biometric prompt and cached key | Mobile-only alternative after a prior password-based unlock |
 
-| Topic | UX design | Technical design / ADR-0001 | Verdict |
-|---|---|---|---|
-| Clipboard copy | "Copied — clears in 30s", TTL auto-clear required | 30s default TTL, `isSensitive`/`UIPasteboard` handling, web residual risk documented (ADR Risks, line 134) | Consistent |
-| Login secret vs. master password | Flagged as open question #1 (same or separate?) | Decided: independent account-login secret distinct from master password, so password reset never touches the vault key (ADR §Decision, tech design §3.3 `authVerifier` note) | **Resolved — see §2.1** |
-| Lost master password | Flagged as open question #3 (recovery story) | Recovery Kit (random recovery key independently wraps the DEK), issued at vault creation, exported/user-stored (ADR Risks + tech design §2, §3.1) | **Resolved — see §2.2** |
-| Conflicting concurrent edits | "No silent overwrite... side-by-side, user picks or merges" | `409 version_conflict` surfaced to user with both versions; no auto-merge (tech design §3.3–3.4) | Consistent, UX's side-by-side screen is the correct UI for this contract |
-| Sharing/teams, "work" category | Flagged as open question #2, category is tag not permission boundary | Explicitly out of scope v1; revisit trigger defined if requirement expands (ADR Revisit Triggers) | Consistent — no permission-denied UI needed for v1 |
-| Sync/offline status UI | Sync indicator + offline banner + pending-sync badge | `SecretStore` is local-authoritative; `pendingChangesSince` queues writes for upload | Consistent |
+Do not imply that the account password can unlock the vault, or that a server operator can recover the master password. Users should choose different account and master passwords. An expired API session is distinct from an incorrect master password and should not be presented as a decryption failure.
 
-## 2. Decisions closing the remaining UX open questions
+Account-password reset, a device/session-management UI, and "log out other sessions" are not implemented. Vault recovery must not be labeled as account-password reset.
 
-### 2.1 Login secret vs. master password — **separate, confirmed**
-Use two independent secrets: an account-login credential (authenticates the device/session to the
-relay) and the vault master password (derives the key hierarchy, never transmitted). Rationale:
-a relay-side credential reset (forgotten login password) must never require or imply master-key
-recovery, and vice versa. **Implication for UX**: onboarding and "forgot password" flows must be
-two distinct flows with distinct copy — "reset your account password" (relay-side, recoverable) vs.
-"recover your vault" (master password, requires the Recovery Kit, ADR Risks). The UX flows in
-Flow 1 (Unlock) should be updated to prompt for the **master password**, not a generic "password",
-and a separate low-frequency "Account settings" surface (not yet designed) owns login-credential
-reset. Flagged for the next UX pass: design the two reset entry points so a user under the stress
-of being locked out is not misdirected into the wrong one.
+## Onboarding and Recovery Kit
 
-### 2.2 Account recovery — **Recovery Kit, confirmed**
-At vault creation, issue a one-time Recovery Kit (high-entropy recovery key wrapping the DEK
-independently of the master password), analogous to Bitwarden/1Password recovery codes. **UX
-action required** (not yet designed, carried forward as a gap): an explicit onboarding step that
-(a) generates and displays the kit, (b) forces an acknowledgment that it is the only recovery path
-before continuing, and (c) a corresponding "I have my Recovery Kit" entry point on the Lock screen
-for the master-password-lost case. This is a new flow, not covered by UX Flow 1's "first-time use"
-step as currently described.
+The flow is account registration/login, vault setup, Recovery Kit display/acknowledgment, then the vault list. The kit is generated client-side and should be saved by the user outside the application. Never put it in logs, analytics, URLs, or clipboard-history screenshots used for issue reports.
 
-### 2.3 Biometric unlock — **optional convenience, never the sole credential**
-Resolved: biometric unlock (mobile only) wraps a *re-unlock convenience token* in the OS
-Keychain/Keystore; it is never a substitute for the master password at Recovery-Kit or
-new-device-enrollment time (tech design §3.2). Decision for the UX open question ("mandatory or
-optional, what's the fallback"): **optional, user-enabled at onboarding, with master-password
-entry always available as the explicit fallback** when biometrics are unavailable, disabled at the
-OS level, or fail. No change needed to UX Flow 1 — it already specifies this fallback behavior
-correctly.
+Recovery uses the kit to unwrap the vault key and set a new master password. It still requires account access and the encrypted vault metadata/items; it is not a backup of the vault itself. Losing both the master password and Recovery Kit leaves no designed recovery path. Losing server data cannot be repaired with a Recovery Kit alone.
 
-### 2.4 Offline read/write — **supported on both platforms, with a web-specific residual-risk caveat**
-Resolved: `SecretStore` is a shared interface (tech design §3.2); both mobile and web read the
-local/cached vault and queue writes via `pendingChangesSince` when offline, surfaced via the sync
-indicator and pending-sync badges UX already designed (State Matrix, Vault list row). The
-difference between platforms is **where the wrapped key material lives**, not whether offline
-read/write works: mobile backs it with Keychain/Keystore, web with IndexedDB ciphertext-only (no
-OS-grade key isolation — ADR Risks, documented limitation). **No new UX work required** — the
-offline/pending-sync states already designed apply uniformly to both platforms; the residual-risk
-caveat is a security posture note, not a UX behavior difference.
+Keep the saved-kit acknowledgment and recovery entry point explicit. Review registration, setup, unlock, and recovery on both clients rather than assuming identical behavior from similar screen names.
 
-## 3. Items explicitly carried forward (not resolved here, require follow-up)
+## Biometric unlock
 
-These remain open after this synthesis and should go to planning/product, not implementation,
-before the affected surfaces are built:
+Biometrics are optional convenience, not the only credential or a replacement for new-device password/recovery flows. Always retain a master-password fallback for unsupported hardware, denial, lockout, and cleared caches.
 
-1. **Multi-device revocation UI** (tech design open question #2): no "log out other sessions" or
-   device-list screen is designed yet. Needed before Phase 2 (multi-device sync) ships.
-2. **Backup/export format** (tech design open question #3): whether users can export an encrypted
-   vault file, and in what format. No UX flow exists for this yet.
-3. **Onboarding flows for §2.1 and §2.2 above**: two new UX flows are required (account-password
-   reset vs. vault recovery; Recovery Kit issuance) before implementation of onboarding/auth
-   screens begins. These are UX design gaps, not technical ones — the technical contracts
-   (`CryptoCore.generateRecoveryKit`-equivalent, per tech design §3.1) already support them,
-   independently in each platform's own implementation (ADR-0005).
-4. **Sharing/teams**: confirmed out of scope for v1 by both designs; revisit only if the
-   requirement set expands (ADR Revisit Triggers).
+The current mobile implementation uses a UI biometric prompt plus a secure-storage DEK cache. It does not establish OS-enforced biometric key release, and native runners/integration are incomplete. See [mobile integration](../../mobile/README.md#native-integration). Web has no biometric vault-unlock path.
 
-## 4. Interface/contract status
+## Secret viewing and clipboard
 
-No changes to the contracts defined in the technical design are required by this reconciliation.
-`CryptoCore`, `SecretStore`, `SyncClient` (tech design §3) and the ADR's key hierarchy stand as
-specified, each now implemented per-platform per ADR-0005 rather than via one shared core, and
-backed by a NoSQL store per ADR-0006. The only additions are the UX-flow clarification in §2.1 (two
-distinct reset entry points) and the two new onboarding flows in §3 above — both are UX-design-stage
-work, not architecture changes.
+Secret fields are decrypted on the client for display, editing, and copying. Keep password reveal explicit and avoid carrying plaintext into logs, crash reports, or server-rendered web code. Copy feedback should communicate the scheduled 30-second clipboard clear without promising erasure: backgrounding, permissions, other applications, or clipboard managers can defeat clearing or retain previous contents.
 
-## 5. Handoff notes for planning agents
+Keep form labels, validation feedback, and status announcements accessible. A password-strength indicator is usability feedback, not a cryptographic guarantee.
 
-- Build order should follow ADR-0005's phased rollout: shared API contract + test-vector suite
-  first, then Flutter mobile (independently shippable), then the relay/API (ADR-0006), then Next.js
-  web.
-- Before UI implementation of onboarding/Lock-screen/Account-settings starts, commission the two
-  carried-forward UX flows in §3 above (reset vs. recovery; Recovery Kit issuance) — implementing
-  against the current UX summary alone would conflate the two reset paths.
-- Treat §2.4's offline parity as a fitness function: a test plan should verify pending-sync badges
-  and conflict resolution behave identically on mobile and web, since the UX summary did not
-  originally distinguish them and the technical doc only tabulated "Availability (mobile)"
-  explicitly.
-- No new ADR is required for this document's UX-reconciliation content; the client-platform and
-  storage-engine changes are already recorded in ADR-0005/ADR-0006.
-- **Recommend persisting the UX design as a repository artifact** (e.g.
-  `docs/design/mobile-secret-manager-ux-design.md`) so future stages can cite it directly instead
-  of relying on the stage-summary text; this handoff currently cites the ux-design stage summary
-  because no such file exists yet. The current task's UX stage (design-synthesis, this run) again
-  escalated out of scope/write-access rather than producing new UX content, so this gap remains
-  open.
+## Offline state and conflicts
+
+Show offline/pending-sync status separately from successful server persistence. Both clients have in-memory state and pending-operation handling, but neither has a durable offline vault. A tab reload or app restart can lose unsynced work; do not promise offline recovery across restarts. A connectivity signal is not proof of API reachability.
+
+A `409 version_conflict` means the server did not accept the submitted revision. Preserve the distinction between local and server versions and require an explicit user choice. The current conflict UI offers keep-mine/keep-theirs, not a general field-level merge or "keep both" workflow. The server is not an archive of rejected edits; do not imply they can be recovered later.
+
+## Review checklist
+
+Use disposable data and verify on each client:
+
+- Registration/login, first setup, saved-kit acknowledgment, lock/unlock, and recovery with valid and invalid credentials.
+- Create/view/edit/delete, password reveal/copy feedback, and clipboard behavior under backgrounding or permission denial.
+- Offline edits, reconnect, failed sync, and reload/process-death loss; pending status must not imply durable storage.
+- Two sessions editing the same item and each conflict choice, including delete conflicts.
+- Expired account tokens, sign-out, and local key/cache handling.
+- Mobile biometric fallback and links arriving before authentication or while the vault is locked.
+
+Sharing/teams, encrypted export/backup, account reset, device revocation UI, and durable offline storage require further design and implementation. Keep their acceptance criteria in the [MVP plan](../plan/mobile-secret-manager-mvp.md) or a new decision record, not as claims in setup documentation.

@@ -1,88 +1,109 @@
-# Mobile Secret Manager — Backend (sync service)
+# Backend
 
-Implements MSM-10 through MSM-13 of `docs/plan/mobile-secret-manager-mvp.md`:
-a minimal custom sync backend that authenticates users and stores/retrieves
-**opaque ciphertext item blobs** with optimistic-concurrency conflict
-detection and a cursor-paginated change feed. Per ADR-0001, this service
-**never sees plaintext secrets, the master password, or any derived
-encryption key** — only ciphertext and non-secret metadata ever reach it.
+TypeScript/Express sync API for account authentication, vault KDF metadata, and opaque encrypted items. The current server uses `InMemoryDocumentStore`: **all data is lost on restart**, including accounts and refresh tokens. There is no database URL or persistent-storage switch.
 
-Stack: Node.js + TypeScript (ADR-0006), Express. Storage: a `DocumentStore`
-port (`src/store/documentStore.ts`) modeled after a NoSQL document store per
-ADR-0006; `InMemoryDocumentStore` is the MVP/dev/test implementation. Swap in
-a real vendor (DynamoDB/Firestore/MongoDB) by implementing the same
-interface — no service/route code changes required.
+See the [root quick start](../README.md#run-locally) to run the API with either client, and [operations](../docs/ops/docker-and-vps.md) for containers.
 
-## Running
+## Development
+
+Use Node.js 22.12+ on 22.x, or 24.x, and npm. From `backend/`:
 
 ```sh
-npm install
-npm run dev        # ts-node/tsx dev server on :3000
-npm run build       # tsc -> dist/
-npm start           # node dist/server.js
-npm test            # vitest (31 tests across auth/vault/items/change-feed)
-npm run typecheck
+npm ci
+PORT=4000 npm run dev
 ```
 
-## Running with Docker
+Without `PORT`, the server listens on 3000. The root setup reserves 3000 for Next.js and uses 4000 for the API. `/healthz` returns `200 {"status":"ok"}` without authentication.
 
-A `Dockerfile` here builds a production-style image (multi-stage, non-root).
-For local Compose-based bring-up (default) and an optional later VPS path,
-see [`docs/ops/docker-and-vps.md`](../docs/ops/docker-and-vps.md); quick
-start from the repo root:
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Watch source using `tsx` |
+| `npm run build` | Compile TypeScript into `dist/` |
+| `npm start` | Run compiled `dist/server.js`; build first |
+| `npm test` | Run Vitest/Supertest API tests |
+| `npm run test:watch` | Watch tests |
+| `npm run typecheck` | Check TypeScript without emitting files |
 
-```sh
-docker compose up --build
-```
+Tests cover authentication, ownership isolation, KDF bootstrap, item revisions/conflicts, and change-feed/tombstone behavior. There is no backend lint script.
 
-Environment variables (all optional in dev, `JWT_SECRET` required in
-`NODE_ENV=production`):
+## Configuration
 
-| Variable | Default | Purpose |
+The backend reads its **process environment**. It does not load `.env` files itself. Supply variables in the launching shell or through Compose; root `.env.example` is the Compose template.
+
+| Variable | Default | Effect |
 |---|---|---|
-| `JWT_SECRET` | `dev-insecure-secret-change-me` | Access-token signing secret |
-| `ACCESS_TOKEN_TTL_SECONDS` | `900` | Access-token lifetime |
-| `REFRESH_TOKEN_TTL_SECONDS` | `2592000` | Refresh-token lifetime |
-| `CHANGE_FEED_PAGE_SIZE` | `50` | Max items per change-feed page |
-| `CHANGE_FEED_RETENTION` | `1000` | Modeled retention window before a cursor is considered expired |
 | `PORT` | `3000` | HTTP listen port |
+| `NODE_ENV` | Unset for direct npm commands | `production` rejects the built-in development JWT secret |
+| `JWT_SECRET` | `dev-insecure-secret-change-me` | Signs/verifies access tokens; replace with a strong generated secret outside local development |
+| `ACCESS_TOKEN_TTL_SECONDS` | `900` | Access-token lifetime in seconds |
+| `REFRESH_TOKEN_TTL_SECONDS` | `2592000` | Refresh-token lifetime in seconds |
+| `CHANGE_FEED_PAGE_SIZE` | `50` | Maximum records returned per change-feed page |
+| `CHANGE_FEED_RETENTION` | `1000` | Parsed configuration only; not wired into runtime compaction/expiry |
 
-## API (`/v1`)
+Restart the process after changes. This resets the in-memory store. TTL/page-size/retention values are parsed as positive integers and otherwise fall back to defaults; use whole positive numbers. `PORT` is parsed separately. The production guard checks the known development JWT value, not secret strength, so operators must validate the replacement.
 
-All endpoints except `/healthz` and `/v1/auth/*` require
-`Authorization: Bearer <accessToken>`; `ownerId` is always derived from the
-verified token, never from the request body.
+`BACKEND_PORT` is a Compose **host-port mapping**, not an application setting. Local Compose fixes the container port at 3000. The web client requires a same-origin proxy because this app has no CORS middleware; the root quick start supplies one without changing the API.
 
-### Auth (MSM-10)
-- `POST /v1/auth/register` `{ email, password }` → `201 { userId }`
-- `POST /v1/auth/login` `{ email, password }` → `200 { accessToken, refreshToken, expiresIn }` or `401 { error: "invalid_credentials" }` (generic — no user-enumeration signal)
-- `POST /v1/auth/refresh` `{ refreshToken }` → `200 { accessToken, refreshToken, expiresIn }` (rotate-on-use: the old refresh token is revoked)
-- `POST /v1/auth/logout` `{ refreshToken }` → `204`
+## API
 
-### Vault bootstrap (MSM-11)
-- `POST /v1/vault/kdf` `{ salt, kdfParams, kdfParamsVersion? }` → `201` the stored KDF record, or `409 { error: "vault_already_provisioned" }`
-- `GET /v1/vault/kdf` → `200 { provisioned: false }` or `200 { provisioned: true, saltRef, salt, kdfParams, kdfParamsVersion }`
+Paths below include `/v1`. Send JSON request bodies with `Content-Type: application/json`. `/v1/me`, `/v1/vault/*`, and `/v1/items*` require an Authorization header with the `Bearer` scheme and an access token. `/healthz` and `/v1/auth/*` do not require that header; refresh/logout use a refresh token in the body.
 
-### Items (MSM-12)
-- `PUT /v1/items/:itemId` `{ expectedRevision, ciphertext, nonce, algo, kdfParams?, schemaVersion }` → `201` (created) / `200` (updated) item, or `409 { error: "version_conflict", yourItem, serverItem }` on a stale `expectedRevision`
-- `GET /v1/items/:itemId` → `200` item, `404 { error: "not_found" }`, or `410 { error: "gone" }` if tombstoned
-- `DELETE /v1/items/:itemId` `{ expectedRevision }` → `200` tombstone record, `404`, `410`, or `409 version_conflict`
+Ownership is derived from the verified access token. Item upserts reject a body containing `ownerId`, even when it matches the caller.
 
-### Change feed (MSM-13)
-- `GET /v1/items?cursor=<changeSeq>` → `200 { items, nextCursor, hasMore }` (items changed after `cursor`, ascending, including tombstones); omitted cursor starts a full resync from `0`. An invalid cursor returns `400`; an expired cursor (older than the retained window) returns `410 { error: "cursor_expired", requiresFullResync: true }`.
+### Account authentication
 
-## Known MVP limitations (flagged for follow-up, non-blocking)
+| Method and path | Request | Response |
+|---|---|---|
+| `POST /v1/auth/register` | `{ email, password }` | `201 { userId }`; duplicate email: `409 { error: "email_already_registered" }` |
+| `POST /v1/auth/login` | `{ email, password }` | `200 { accessToken, refreshToken, expiresIn }`; failure: `401 { error: "invalid_credentials" }` |
+| `POST /v1/auth/refresh` | `{ refreshToken }` | `200` token pair; invalid token: `401 { error: "invalid_refresh_token" }` |
+| `POST /v1/auth/logout` | `{ refreshToken }` | `204`, revokes that refresh token |
+| `GET /v1/me` | No body | `200 { userId }` |
 
-- Account-password hashing uses Node's built-in `scrypt` rather than a
-  dedicated Argon2id library, since this backend installs no native crypto
-  bindings; swap in a vetted Argon2id package if the deployment environment
-  supports native modules.
-- `InMemoryDocumentStore` is not durable/distributed; production deployment
-  (MSM-17, infrastructure scope) must supply a real NoSQL-backed
-  `DocumentStore` implementation.
-- The change-feed `hasMore` flag is a conservative heuristic
-  (`page.length === pageSize`); it may indicate one more page than strictly
-  necessary but never causes a gap or duplicate-skipped tombstone.
-- Observability (dashboards/alerting) is infrastructure scope (MSM-19); this
-  service only guarantees its error logging never includes request/response
-  bodies (which may carry ciphertext or tokens).
+`password` is the account-login password, never the vault master password. Account passwords are hashed with Node's built-in scrypt. Refresh tokens rotate on use; logout does not immediately invalidate an already-issued access token. Login failure uses a generic credential error, but registration reports duplicate emails.
+
+### Vault bootstrap
+
+| Method and path | Request | Response |
+|---|---|---|
+| `POST /v1/vault/kdf` | `{ salt, kdfParams, kdfParamsVersion? }` | `201 { saltRef, salt, kdfParams, kdfParamsVersion }`; repeat setup: `409 { error: "vault_already_provisioned" }` |
+| `GET /v1/vault/kdf` | No body | `200 { provisioned: false }` or `200 { provisioned: true, saltRef, salt, kdfParams, kdfParamsVersion }` |
+
+The POST response does **not** include `provisioned`. These routes store only salt/KDF metadata. Clients synchronize wrapped vault keys through the reserved `__vault_meta__` item; see the [technical reference](../docs/design/mobile-secret-manager-technical-design.md#cross-device-vault-key-sync).
+
+### Items and change feed
+
+| Method and path | Request | Response |
+|---|---|---|
+| `PUT /v1/items/:itemId` | `{ expectedRevision, ciphertext, nonce, algo, kdfParams?, schemaVersion }` | `201` new item or `200` updated item; stale revision: `409 { error: "version_conflict", yourItem, serverItem }` |
+| `GET /v1/items/:itemId` | No body | `200` item; missing: `404 { error: "not_found" }`; deleted: `410 { error: "gone" }` |
+| `DELETE /v1/items/:itemId` | `{ expectedRevision }` | `200` tombstone; missing/deleted/conflict: `404`/`410`/`409` |
+| `GET /v1/items?cursor=0` | Non-negative integer cursor | `200 { items, nextCursor, hasMore }`; invalid cursor: `400`; expired cursor: `410 { error: "cursor_expired", requiresFullResync: true }` |
+
+Use `expectedRevision: 0` for creation, or the last server revision for updates/deletes. A successful write increments `revision` and the owner's `changeSeq`. An upsert with a tombstone's current revision can restore that item.
+
+An item response contains `itemId`, `ownerId`, `ciphertext`, `nonce`, `algo`, `kdfParams`, `schemaVersion`, `revision`, `createdAt`, `updatedAt`, `deletedAt`, and `changeSeq`. A delete sets `deletedAt` and clears `ciphertext`, `nonce`, `algo`, and `kdfParams` to `null`.
+
+The feed returns the latest state of each item changed after the cursor, in ascending change-sequence order, including tombstones. Omitted cursor starts at zero. Follow `nextCursor` while `hasMore` is true; the page-size heuristic can require one final empty page. It is not an append-only history of every edit.
+
+Current runtime code does not advance the retention floor. Tests can raise it to exercise expiry, but once raised it also rejects cursor zero; do not assume the advertised full-resync recovery path works with a compacted store. Implement and test that path before adding retention to a persistent adapter.
+
+### Errors
+
+Route errors use a string code, for example `{ error: "validation_error", message: "..." }`; `message` is not present on every error. Conflict and cursor-expiry errors include the extra fields shown above. Unexpected failures return `500 { error: "internal_error" }`. Clients should inspect status and error code, not parse human-readable messages.
+
+## Code map and extension points
+
+| Path | Responsibility |
+|---|---|
+| `src/server.ts`, `src/config.ts` | Startup and environment configuration |
+| `src/app.ts`, `src/routes/`, `src/middleware/` | Express wiring, routes, authentication |
+| `src/services/` | Account, vault, and sync behavior |
+| `src/store/documentStore.ts` | Document-store interface |
+| `src/store/inMemoryStore.ts` | Current single-process storage and sequence helpers |
+| `src/types.ts` | Stored record and response types |
+| `tests/` | API behavior tests |
+
+A durable adapter needs conditional writes and account-scoped sequencing, not just a database container. `createApp` and `ItemsService` currently depend on `InMemoryDocumentStore`, including helpers outside the interface, so replacement also requires wiring/type changes. Add tests against the real adapter before relying on concurrency or retention guarantees.
+
+Keep plaintext vault fields, master passwords, recovery keys, and raw vault keys out of routes, logs, and stored records. Production hardening, rate limiting, persistent storage, and operational monitoring remain follow-up work; a successful build is not a security review.

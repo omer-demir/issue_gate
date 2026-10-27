@@ -1,13 +1,8 @@
-# Local development Compose file (default, run first).
-#
-# Usage:
-#   cp .env.example .env   # optional, only needed to override defaults
-#   docker compose up --build
-#
-# This file is intentionally self-contained for a single developer running
-# the backend against its in-memory store (no external database is wired up
-# in application code yet; see backend/README.md "Known MVP limitations").
-# Nothing here deploys to any remote environment.
+# Local backend only; clients run separately (see README.md).
+# Optional overrides: copy .env.example to .env.
+# Start: docker compose up --build
+# Alongside web: BACKEND_PORT=4000 docker compose up --build
+# All backend data is in memory and is lost on restart.
 
 services:
   backend:

@@ -1,9 +1,6 @@
 # syntax=docker/dockerfile:1
-#
-# Builds the issue_gate backend (MSM-10..MSM-13 sync service) for local
-# Docker Compose use first, and as the same reusable artifact for an
-# optional later VPS/cloud deployment (MSM-17 scope). No build step here
-# deploys anything; it only produces a local image.
+# Backend image for local Compose and future hosting.
+# See docs/ops/docker-and-vps.md for Node-version and deployment caveats.
 
 FROM node:20.17.0-alpine AS builder
 WORKDIR /app
@@ -24,7 +21,6 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 
-# Non-root runtime user (MSM-17 non-functional: least-privilege execution).
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser
 
